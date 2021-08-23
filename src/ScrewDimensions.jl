@@ -1,8 +1,10 @@
 module ScrewDimensions
 using DataFrames
-using Unitful, UnitfulRecipes, Latexify, UnitfulLatexify, Plots
+using Unitful
+using UnitfulRecipes
+using RecipesBase
 
-export plotMseries, diagonal_length
+export diagonal_length
 
 
 """
@@ -103,45 +105,101 @@ end
 @uncScrew Symbol("UNC7/8")      0.8750  0.111111
 @uncScrew Symbol("UNC1/1")      1.0000  0.125000
 
-function plotMseries(x=nothing, y=nothing)
-    pl = plot(
-         SCREWS[!, :nominal_diameter],
-         diagonal_length.(SCREWS[!, :name]),
-         ;
-         seriestype=:scatter,
-         color=:gray,
-         markersize=3,
-        )
-    plot!(
-          pl,
-          SCREWS[!,:nominal_diameter],
-          SCREWS[!,:outer_minor],
-          ;
-          legend=nothing,
-          fontfamily="Computer Modern",
-          seriestype=:scatter,
-          series_annotation=[(s, -45.0, "Computer Modern") for s in SCREWS[!,:name]],
-          unitformat=latexify,
-          xguide="D",
-          yguide="d",
-          color=startswith.(String.(SCREWS[!,:name]),"M")*1
-         )
-    if !isnothing(x)
-        rows = sort(SCREWS, order(:nominal_diameter, by=t->abs2(t-x)))
-        xs=ustrip.(u"mm", rows[1:4, :nominal_diameter])
-        ys=ustrip.(u"mm", rows[1:4, :outer_minor])
-        if !isnothing(y)
-            plot!(pl, [x], [y]; seriestype=:scatter, color=:red)
-        else
-            plot!(pl, [x]; seriestype=:vline, color=:red)
-        end
-        plot!(pl; xlims=extrema(xs).+(-0.1, 0.1), ylims=extrema(ys).+(-0.1, 0.1))
+
+# Plot recipe
+@userplot ScrewPlot
+
+@recipe function f(h::ScrewPlot)
+    measured_x = length(h.args) >= 1 ? h.args[1] : nothing
+    measured_y = length(h.args) >= 2 ? h.args[2] : nothing
+    xguide := "D"
+    yguide := "d"
+    @series begin
+        seriestype := :scatter
+        primary := false
+        seriescolor := startswith.(String.(SCREWS[!,:name]), "M")*1
+        markersize := 3
+        label := nothing
+        SCREWS[!, :nominal_diameter], diagonal_length.(SCREWS[!, :name])
     end
-    return pl
+
+    if !isnothing(measured_x)
+        rows = sort(SCREWS, order(:nominal_diameter, by=t->abs2(t-measured_x)))
+        xs = ustrip.(get(plotattributes, :xunit, u"mm"), rows[1:4, :nominal_diameter])
+        push!(xs, ustrip(get(plotattributes, :xunit, u"mm"), measured_x))
+        ys = ustrip.(get(plotattributes, :yunit, u"mm"), rows[1:4, :outer_minor])
+        xlims := extrema(xs)
+        xwiden := true
+        if !isnothing(measured_y)
+            push!(ys, ustrip(get(plotattributes, :yunit, u"mm"), measured_y))
+            ylims := extrema(ys)
+            ywiden := true
+            @series begin
+                seriestype := :scatter
+                seriescolor := :red
+                markersize := 5
+                label := "Measured"
+                [measured_x], [measured_y]
+            end
+        else
+            ylims := extrema(ys)
+            ywiden := true
+            @series begin
+                seriestype := :vline
+                seriescolor := :red
+                label := "Measured"
+                [measured_x]
+            end
+        end
+        @series begin
+            seriestype := :scatter
+            primary := true
+            series_annotations := [(s, -45.0, "Computer Modern") for s in SCREWS[!, :name]]
+            seriescolor := startswith.(String.(SCREWS[!,:name]), "M")*1
+            label := nothing
+            SCREWS[!, :nominal_diameter], SCREWS[!, :outer_minor]
+        end
+    end
 end
 
 """
+```julia
+screwplot()
 ```
+
+Plot all the screws in the register, minor diameter vs major. Above each point will also be
+the diagonal diameter, i.e. the diameter as measured by a caliper between a point along the
+thread and another half a turn later, with a smaller marker.
+
+The major diameter of a measured screw can be supplied to zoom the ``x`` axis to the nearest
+couple of suggestions, as well as mark this value in the plot.
+
+The minor diameter can be supplied as a second argument and will be used to further pinpoint
+your screw in the plot.
+
+## Example
+
+A screw is somewhat haphazardly measured to be ``9.8\\;\\mathrm{mm}`` in diameter. The user
+runs
+
+```julia
+screwplot(9.8u"mm")
+```
+
+and sees that the closest alternatives are M10 and UNC⅜. To differentiate them, the user
+measures the diagonal minor diameter to be ``8.0\\;\\mathrm{mm}``. Now
+
+```julia
+using ScrewDimensions, Plots, Unitful
+screwplot(9.8u"mm", 8.0u"mm")
+```
+
+shows that the closest screw is indeed M10.
+"""
+function screwplot end
+
+"""
+```julia
 diagonal_length(name)
 ```
 Find the diameter of a screw, as measured between two consecutive threads, as one would with
